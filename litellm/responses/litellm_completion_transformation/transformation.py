@@ -443,7 +443,51 @@ class LiteLLMCompletionResponsesConfig:
             )
         )
 
-        return messages
+        # Codex Responses requests can contain both top-level `instructions`
+        # and `developer` messages. Some chat-template providers (e.g. Cerebras
+        # Qwen) require exactly one leading system message and reject system-like
+        # messages that appear later in the conversation.
+        #
+        # Merge all system/developer text into one leading system message while
+        # preserving the order of all non-system messages.
+        system_contents: list[str] = []
+        other_messages: list[
+            AllMessageValues
+            | GenericChatCompletionMessage
+            | ChatCompletionMessageToolCall
+            | ChatCompletionResponseMessage
+            | Message
+        ] = []
+
+        for message in messages:
+            role = (
+                message.get("role")
+                if isinstance(message, dict)
+                else getattr(message, "role", None)
+            )
+
+            if role in ("system", "developer"):
+                content = (
+                    message.get("content")
+                    if isinstance(message, dict)
+                    else getattr(message, "content", None)
+                )
+                if isinstance(content, str) and content:
+                    system_contents.append(content)
+                continue
+
+            other_messages.append(message)
+
+        if system_contents:
+            other_messages.insert(
+                0,
+                ChatCompletionSystemMessage(
+                    role="system",
+                    content="\\n\\n".join(system_contents),
+                ),
+            )
+
+        return other_messages
 
     @staticmethod
     async def async_responses_api_session_handler(
