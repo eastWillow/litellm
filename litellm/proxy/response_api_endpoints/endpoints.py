@@ -245,6 +245,95 @@ async def responses_api(
 
     data = await _read_request_body(request=request)
 
+    # Optional Codex request-size diagnostics.
+    # Enable with: CODEX_CONTEXT_DEBUG=1 litellm --config <config>
+    import os as _context_debug_os
+
+    if _context_debug_os.getenv("CODEX_CONTEXT_DEBUG") == "1":
+        import json as _context_debug_json
+
+        def _context_debug_size(value):
+            try:
+                return len(
+                    _context_debug_json.dumps(
+                        value,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                )
+            except Exception:
+                return 0
+
+        _input = data.get("input")
+        _tools = data.get("tools")
+
+        _instructions_chars = _context_debug_size(data.get("instructions"))
+        _input_chars = _context_debug_size(_input)
+        _tools_chars = _context_debug_size(_tools)
+        _total_chars = _context_debug_size(data)
+
+        _input_groups = {}
+        if isinstance(_input, list):
+            for _item in _input:
+                if not isinstance(_item, dict):
+                    continue
+
+                _name = (
+                    _item.get("role")
+                    or _item.get("type")
+                    or "unknown"
+                )
+
+                _input_groups[_name] = (
+                    _input_groups.get(_name, 0)
+                    + _context_debug_size(_item)
+                )
+
+        _tool_sizes = []
+        if isinstance(_tools, list):
+            for _tool in _tools:
+                if not isinstance(_tool, dict):
+                    continue
+
+                _name = (
+                    _tool.get("name")
+                    or _tool.get("type")
+                    or "unknown"
+                )
+
+                _tool_sizes.append(
+                    (_name, _context_debug_size(_tool))
+                )
+
+        _tool_sizes.sort(key=lambda x: x[1], reverse=True)
+
+        print()
+        print("=== CODEX REQUEST SIZE ===")
+        print(f"model              : {data.get('model')}")
+        print(f"instructions_chars : {_instructions_chars:,}")
+        print(f"input_chars        : {_input_chars:,}")
+        print(f"tools_chars        : {_tools_chars:,}")
+        print(
+            f"tools_count        : "
+            f"{len(_tools) if isinstance(_tools, list) else 0}"
+        )
+        print(f"total_json_chars   : {_total_chars:,}")
+
+        print("--- input groups ---")
+        for _name, _size in sorted(
+            _input_groups.items(),
+            key=lambda x: x[1],
+            reverse=True,
+        ):
+            print(f"{_name:20s}: {_size:,}")
+
+        print("--- largest tools ---")
+        for _name, _size in _tool_sizes[:20]:
+            print(f"{_name:40s}: {_size:,}")
+
+        print("=== END CODEX REQUEST SIZE ===")
+        print()
+
     # Check if polling via cache should be used for this request
     from litellm.proxy.response_polling.polling_handler import (
         should_use_polling_for_request,
